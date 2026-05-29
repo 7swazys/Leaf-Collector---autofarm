@@ -1,3 +1,6 @@
+# LOADSTRING 
+<pre><code>loadstring(game:HttpGet("https://raw.githubusercontent.com/7swazys/Leaf-Collector---autofarm/refs/heads/main/leafcollect.luau"))()</code></pre>
+
 # Leaf-Collector---autofarm
 <img width="442" height="521" alt="image" src="https://github.com/user-attachments/assets/f2b1e8e7-4b62-49d0-b831-5096e9a9e70d" /> 
 # this game on rblx
