@@ -412,7 +412,6 @@ local misc = win:AddSection("Misc")
 
 combat:Toggle("aimbot", cfg.aimbot, function(s) cfg.aimbot = s saveCfg() notify("aimbot " .. (s and "on" or "off"), roleColors.murder) end)
 combat:Toggle("triggerbot", cfg.autoclick, function(s) cfg.autoclick = s saveCfg() notify("triggerbot " .. (s and "on" or "off"), roleColors.sheriff) end)
-combat:Toggle("silent aim", cfg.silentaim, function(s) cfg.silentaim = s saveCfg() notify("silent aim " .. (s and "on" or "off"), roleColors.murder) end)
 combat:Toggle("rainbow beam", cfg.rainbowbeam, function(s) cfg.rainbowbeam = s saveCfg() end)
 combat:Toggle("esp", cfg.esp, function(s) cfg.esp = s saveCfg() notify("esp " .. (s and "on" or "off"), roleColors.inno) end)
 combat:Toggle("tracers", cfg.tracers, function(s) cfg.tracers = s saveCfg() notify("tracers " .. (s and "on" or "off"), roleColors.inno) end)
