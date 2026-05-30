@@ -8,15 +8,15 @@ local lp = plrs.LocalPlayer
 
 local cfgPath = "mm2cfg.json"
 local cfg = {
-    aimbot = false, autoclick = false, silentaim = false,
+    aimbot = false, autoclick = false,
     farming = false, flying = false, noclip = false,
     autopickup = false, esp = true, tracers = true,
-    chams = false, speedhax = false, bhop = false,
     rainbowbeam = false, beamthick = 0.08,
     method = "MouseMoveRel", fov = 150, smooth = 0.18,
     flyspd = 140, maxdist = 250, farmcool = 0.9,
     jiggle = 0.7, walkspd = 40,
     beamr = 160, beamg = 32, beamb = 240,
+    bhop = false, autokill = false, speedhax = false,
 }
 
 local function saveCfg()
@@ -36,6 +36,7 @@ loadCfg()
 local hrp, hum, bv, bg
 local lastclick = 0
 local rbhue = 0
+local bhopVel = 0
 
 local function setupChar(char)
     hrp = char:WaitForChild("HumanoidRootPart")
@@ -46,58 +47,11 @@ local function setupChar(char)
     bg = Instance.new("BodyGyro")
     bg.MaxTorque = Vector3.new(4e5, 4e5, 4e5)
     bv.MaxForce = Vector3.new(4e5, 4e5, 4e5)
+    bhopVel = 0
 end
 
 lp.CharacterAdded:Connect(setupChar)
 if lp.Character then setupChar(lp.Character) end
-
-local notifGui = Instance.new("ScreenGui")
-notifGui.Name = "mm2notifs"
-notifGui.ResetOnSpawn = false
-notifGui.Parent = game:GetService("CoreGui")
-
-local function notify(txt, color)
-    color = color or Color3.fromRGB(160, 32, 240)
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(0, 240, 0, 38)
-    f.Position = UDim2.new(1, 10, 0.82, 0)
-    f.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
-    f.BackgroundTransparency = 0.05
-    f.BorderSizePixel = 0
-    f.Parent = notifGui
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = color
-    stroke.Thickness = 1.2
-    stroke.Transparency = 0.3
-    stroke.Parent = f
-    local bar = Instance.new("Frame")
-    bar.Size = UDim2.new(0, 3, 1, 0)
-    bar.BackgroundColor3 = color
-    bar.BorderSizePixel = 0
-    bar.Parent = f
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 4)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -16, 1, 0)
-    label.Position = UDim2.new(0, 14, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = txt
-    label.TextColor3 = Color3.new(1, 1, 1)
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 12
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = f
-    tws:Create(f, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = UDim2.new(1, -252, 0.82, 0)
-    }):Play()
-    task.delay(2.8, function()
-        tws:Create(f, TweenInfo.new(0.3, Enum.EasingStyle.Sine), {
-            Position = UDim2.new(1, 10, 0.82, 0),
-            BackgroundTransparency = 1
-        }):Play()
-        task.delay(0.3, function() f:Destroy() end)
-    end)
-end
 
 local roleColors = {
     murder = Color3.fromRGB(255, 60, 60),
@@ -116,21 +70,25 @@ end
 
 local function roleColor(p) return roleColors[getRole(p)] end
 
+local function getItem(p)
+    if not p.Character then return "" end
+    local bp = p:FindFirstChild("Backpack")
+    local ch = p.Character
+    if (bp and bp:FindFirstChild("Knife")) or (ch and ch:FindFirstChild("Knife")) then return "[knife]" end
+    if (bp and bp:FindFirstChild("Gun")) or (ch and ch:FindFirstChild("Gun")) then return "[gun]" end
+    return ""
+end
+
 local function hasGun()
     local ch = lp.Character
     local bp = lp:FindFirstChild("Backpack")
     return (ch and ch:FindFirstChild("Gun")) or (bp and bp:FindFirstChild("Gun"))
 end
 
-local function isVisible(part)
-    if not lp.Character then return false end
-    local origin = cam.CFrame.Position
-    local dir = part.Position - origin
-    local rp = RaycastParams.new()
-    rp.FilterDescendantsInstances = {lp.Character, cam}
-    rp.FilterType = Enum.RaycastFilterType.Blacklist
-    local res = workspace:Raycast(origin, dir, rp)
-    return res and res.Instance:IsDescendantOf(part.Parent)
+local function hasKnife()
+    local ch = lp.Character
+    local bp = lp:FindFirstChild("Backpack")
+    return (ch and ch:FindFirstChild("Knife")) or (bp and bp:FindFirstChild("Knife"))
 end
 
 local function findNearestCoin()
@@ -171,86 +129,156 @@ local function makeBeam(a, b)
     light.Range = 10
     light.Parent = beam
     local t = tws:Create(beam, TweenInfo.new(0.5, Enum.EasingStyle.Sine), {
-        Transparency = 1,
-        Size = Vector3.new(0, 0, dist)
+        Transparency = 1, Size = Vector3.new(0, 0, dist)
     })
     t:Play()
     t.Completed:Connect(function() beam:Destroy() end)
 end
 
--- ESP
-local espFolder = Instance.new("Folder")
-espFolder.Name = "esp"
-espFolder.Parent = game:GetService("CoreGui")
-local espObjects = {}
+-- esp
+local black = Color3.fromRGB(0, 0, 0)
+local white = Color3.fromRGB(255, 255, 255)
+local espLibraries = {}
+
+local function newQuad(thickness, color)
+    local q = Drawing.new("Quad")
+    q.Visible = false
+    q.PointA = Vector2.new(0,0)
+    q.PointB = Vector2.new(0,0)
+    q.PointC = Vector2.new(0,0)
+    q.PointD = Vector2.new(0,0)
+    q.Color = color
+    q.Filled = false
+    q.Thickness = thickness
+    q.Transparency = 1
+    return q
+end
+
+local function newLine(thickness, color)
+    local l = Drawing.new("Line")
+    l.Visible = false
+    l.From = Vector2.new(0,0)
+    l.To = Vector2.new(0,0)
+    l.Color = color
+    l.Thickness = thickness
+    l.Transparency = 1
+    return l
+end
+
+local function newText(size, color)
+    local t = Drawing.new("Text")
+    t.Visible = false
+    t.Text = ""
+    t.Size = size
+    t.Color = color
+    t.Outline = true
+    t.OutlineColor = black
+    t.Center = true
+    t.Font = 2
+    return t
+end
+
+local function setVis(state, lib)
+    for _, x in pairs(lib) do x.Visible = state end
+end
 
 local function makeESP(p)
     if p == lp then return end
-    local obj = {}
-    local box = Instance.new("SelectionBox")
-    box.LineThickness = 0.05
-    box.SurfaceTransparency = 0.88
-    box.Parent = espFolder
-    local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0, 120, 0, 45)
-    bb.StudsOffset = Vector3.new(0, 4, 0)
-    bb.AlwaysOnTop = true
-    bb.Parent = espFolder
-    local nameL = Instance.new("TextLabel")
-    nameL.Size = UDim2.new(1, 0, 0.55, 0)
-    nameL.BackgroundTransparency = 1
-    nameL.Font = Enum.Font.GothamBold
-    nameL.TextSize = 13
-    nameL.TextStrokeTransparency = 0.4
-    nameL.Parent = bb
-    local infoL = Instance.new("TextLabel")
-    infoL.Size = UDim2.new(1, 0, 0.45, 0)
-    infoL.Position = UDim2.new(0, 0, 0.55, 0)
-    infoL.BackgroundTransparency = 1
-    infoL.Font = Enum.Font.Gotham
-    infoL.TextSize = 11
-    infoL.TextStrokeTransparency = 0.4
-    infoL.Parent = bb
-    local tracer = Drawing.new("Line")
-    tracer.Thickness = 1.5
-    tracer.Transparency = 0.3
-    tracer.Visible = false
-    obj.box = box obj.bb = bb obj.nameL = nameL obj.infoL = infoL obj.tracer = tracer
-    espObjects[p] = obj
-    run.RenderStepped:Connect(function()
-        local char = p.Character
-        local phrp = char and char:FindFirstChild("HumanoidRootPart")
-        local phum = char and char:FindFirstChild("Humanoid")
-        if not cfg.esp or not phrp or not hrp then
-            box.Adornee = nil bb.Adornee = nil tracer.Visible = false return
-        end
-        local dist = math.floor((hrp.Position - phrp.Position).Magnitude)
-        local rc = roleColor(p)
-        box.Adornee = char box.Color3 = rc box.SurfaceColor3 = rc
-        bb.Adornee = phrp
-        nameL.TextColor3 = rc nameL.Text = p.Name
-        infoL.TextColor3 = Color3.fromRGB(200, 200, 200)
-        infoL.Text = getRole(p):upper() .. " | " .. dist .. "m" .. (phum and " | " .. math.floor(phum.Health) .. "hp" or "")
-        local pos, onScreen = cam:WorldToViewportPoint(phrp.Position)
-        if onScreen and cfg.tracers then
-            tracer.Visible = true
-            tracer.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
-            tracer.To = Vector2.new(pos.X, pos.Y)
-            tracer.Color = rc
-        else tracer.Visible = false end
-    end)
-end
+    local lib = {
+        blacktracer = newLine(2, black),
+        tracer = newLine(1, black),
+        black = newQuad(2, black),
+        box = newQuad(1, black),
+        healthbar = newLine(3, black),
+        greenhealth = newLine(1.5, black),
+        name = newText(13, white),
+        item = newText(11, white),
+    }
+    espLibraries[p] = lib
 
-local function removeESP(p)
-    local obj = espObjects[p]
-    if not obj then return end
-    obj.box:Destroy() obj.bb:Destroy() obj.tracer:Remove()
-    espObjects[p] = nil
+    coroutine.wrap(function()
+        local conn
+        conn = run.RenderStepped:Connect(function()
+            if not cfg.esp then setVis(false, lib) return end
+
+            local char = p.Character
+            local phrp = char and char:FindFirstChild("HumanoidRootPart")
+            local phead = char and char:FindFirstChild("Head")
+            local phum = char and char:FindFirstChild("Humanoid")
+
+            if char and phrp and phum and phum.Health > 0 and phead then
+                local humPos, onScreen = cam:WorldToViewportPoint(phrp.Position)
+                if onScreen then
+                    local head = cam:WorldToViewportPoint(phead.Position)
+                    local distY = math.clamp((Vector2.new(head.X, head.Y) - Vector2.new(humPos.X, humPos.Y)).Magnitude, 2, math.huge)
+                    local rc = roleColor(p)
+
+                    lib.box.Color = rc
+                    lib.tracer.Color = rc
+
+                    local function sizeQuad(item)
+                        item.PointA = Vector2.new(humPos.X + distY, humPos.Y - distY*2)
+                        item.PointB = Vector2.new(humPos.X - distY, humPos.Y - distY*2)
+                        item.PointC = Vector2.new(humPos.X - distY, humPos.Y + distY*2)
+                        item.PointD = Vector2.new(humPos.X + distY, humPos.Y + distY*2)
+                    end
+                    sizeQuad(lib.box)
+                    sizeQuad(lib.black)
+
+                    -- name tag above box
+                    lib.name.Text = p.Name
+                    lib.name.Color = white
+                    lib.name.Position = Vector2.new(humPos.X, humPos.Y - distY*2 - 14)
+                    lib.name.Visible = true
+
+                    -- item tag below box
+                    local item = getItem(p)
+                    if item ~= "" then
+                        lib.item.Text = item
+                        lib.item.Color = rc
+                        lib.item.Position = Vector2.new(humPos.X, humPos.Y + distY*2 + 3)
+                        lib.item.Visible = true
+                    else
+                        lib.item.Visible = false
+                    end
+
+                    if cfg.tracers then
+                        lib.tracer.From = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y)
+                        lib.blacktracer.From = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y)
+                        lib.tracer.To = Vector2.new(humPos.X, humPos.Y + distY*2)
+                        lib.blacktracer.To = Vector2.new(humPos.X, humPos.Y + distY*2)
+                        lib.tracer.Visible = true
+                        lib.blacktracer.Visible = true
+                    else
+                        lib.tracer.Visible = false
+                        lib.blacktracer.Visible = false
+                    end
+
+                    local d = (Vector2.new(humPos.X - distY, humPos.Y - distY*2) - Vector2.new(humPos.X - distY, humPos.Y + distY*2)).Magnitude
+                    local healthOff = phum.Health / phum.MaxHealth * d
+                    lib.greenhealth.Color = Color3.fromRGB(255,0,0):lerp(Color3.fromRGB(0,255,0), phum.Health / phum.MaxHealth)
+                    lib.greenhealth.From = Vector2.new(humPos.X - distY - 4, humPos.Y + distY*2)
+                    lib.greenhealth.To = Vector2.new(humPos.X - distY - 4, humPos.Y + distY*2 - healthOff)
+                    lib.healthbar.From = Vector2.new(humPos.X - distY - 4, humPos.Y + distY*2)
+                    lib.healthbar.To = Vector2.new(humPos.X - distY - 4, humPos.Y - distY*2)
+
+                    lib.box.Visible = true
+                    lib.black.Visible = true
+                    lib.healthbar.Visible = true
+                    lib.greenhealth.Visible = true
+                else
+                    setVis(false, lib)
+                end
+            else
+                setVis(false, lib)
+                if not plrs:FindFirstChild(p.Name) then conn:Disconnect() end
+            end
+        end)
+    end)()
 end
 
 for _, p in plrs:GetPlayers() do makeESP(p) end
 plrs.PlayerAdded:Connect(makeESP)
-plrs.PlayerRemoving:Connect(removeESP)
 
 local fovCircle = Drawing.new("Circle")
 fovCircle.Thickness = 1.2
@@ -262,6 +290,30 @@ fovCircle.Visible = false
 local gunFolder = Instance.new("Folder")
 gunFolder.Parent = game:GetService("CoreGui")
 
+-- auto kill -- only targets inno and sheriff
+task.spawn(function()
+    while true do
+        task.wait(0.15)
+        if cfg.autokill and hasKnife() and hrp then
+            for _, p in plrs:GetPlayers() do
+                if p == lp then continue end
+                local role = getRole(p)
+                if role ~= "inno" and role ~= "sheriff" then continue end
+                local char = p.Character
+                local phrp = char and char:FindFirstChild("HumanoidRootPart")
+                local phum = char and char:FindFirstChild("Humanoid")
+                if phrp and phum and phum.Health > 0 then
+                    local old = hrp.CFrame
+                    hrp.CFrame = phrp.CFrame * CFrame.new(0, 0, -2)
+                    task.wait(0.1)
+                    hrp.CFrame = old
+                    task.wait(0.05)
+                end
+            end
+        end
+    end
+end)
+
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -269,7 +321,6 @@ task.spawn(function()
             if hasGun() then
                 cfg.autopickup = false
                 gunFolder:ClearAllChildren()
-                notify("got gun", Color3.fromRGB(255, 215, 0))
             else
                 gunFolder:ClearAllChildren()
                 local drop = workspace:FindFirstChild("GunDrop", true)
@@ -345,17 +396,32 @@ run.RenderStepped:Connect(function(dt)
     fovCircle.Color = cfg.rainbowbeam and Color3.fromHSV(rbhue, 1, 1) or Color3.fromRGB(160, 32, 240)
     fovCircle.Visible = cfg.aimbot
     if not hrp or not hrp.Parent then return end
+
     if cfg.noclip and lp.Character then
         for _, p in lp.Character:GetDescendants() do
             if p:IsA("BasePart") then p.CanCollide = false end
         end
     end
+
     if cfg.speedhax and hum then hum.WalkSpeed = cfg.walkspd end
-    if cfg.bhop and hum then
-        if hum:GetState() == Enum.HumanoidStateType.Landed then
+
+    if cfg.bhop and hum and hrp then
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Freefall then
+            bhopVel = math.min(bhopVel + dt * 40, 120)
+        end
+        if state == Enum.HumanoidStateType.Landed then
+            local lookDir = hrp.CFrame.LookVector * Vector3.new(1, 0, 1)
+            hrp.AssemblyLinearVelocity = lookDir.Unit * bhopVel + Vector3.new(0, 50, 0)
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
         end
+        if state == Enum.HumanoidStateType.Running and bhopVel > 0 then
+            bhopVel = math.max(bhopVel - dt * 20, 0)
+        end
+    else
+        bhopVel = 0
     end
+
     if cfg.flying and bv and bg then
         local dir = Vector3.zero
         if uis:IsKeyDown(Enum.KeyCode.W) then dir += cam.CFrame.LookVector end
@@ -366,6 +432,7 @@ run.RenderStepped:Connect(function(dt)
         bv.Velocity = dir.Magnitude > 0 and dir.Unit * cfg.flyspd or Vector3.zero
         bg.CFrame = cam.CFrame
     end
+
     if cfg.aimbot then
         local target, shortest = nil, math.huge
         for _, p in plrs:GetPlayers() do
@@ -386,7 +453,7 @@ run.RenderStepped:Connect(function(dt)
             end
         end
         if target then
-            if cfg.autoclick and hasGun() and isVisible(target) and mouse1press then
+            if cfg.autoclick and hasGun() and mouse1press then
                 if tick() - lastclick >= 0.12 then
                     lastclick = tick()
                     mouse1press()
@@ -403,18 +470,16 @@ run.RenderStepped:Connect(function(dt)
     end
 end)
 
--- load ui last so everything is ready
 local lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/IcantAffordSynapse/SimpleLib/refs/heads/main/SimpleLib.lua"))()
 local win = lib:Window("mm2")
 local combat = win:AddSection("Combat")
 local movement = win:AddSection("Movement")
-local misc = win:AddSection("Misc")
+local visuals = win:AddSection("Visuals")
+local fun = win:AddSection("Fun")
 
-combat:Toggle("aimbot", cfg.aimbot, function(s) cfg.aimbot = s saveCfg() notify("aimbot " .. (s and "on" or "off"), roleColors.murder) end)
-combat:Toggle("triggerbot", cfg.autoclick, function(s) cfg.autoclick = s saveCfg() notify("triggerbot " .. (s and "on" or "off"), roleColors.sheriff) end)
+combat:Toggle("aimbot", cfg.aimbot, function(s) cfg.aimbot = s saveCfg() end)
+combat:Toggle("triggerbot", cfg.autoclick, function(s) cfg.autoclick = s saveCfg() end)
 combat:Toggle("rainbow beam", cfg.rainbowbeam, function(s) cfg.rainbowbeam = s saveCfg() end)
-combat:Toggle("esp", cfg.esp, function(s) cfg.esp = s saveCfg() notify("esp " .. (s and "on" or "off"), roleColors.inno) end)
-combat:Toggle("tracers", cfg.tracers, function(s) cfg.tracers = s saveCfg() notify("tracers " .. (s and "on" or "off"), roleColors.inno) end)
 combat:Slider("fov size", 50, 400, cfg.fov, function(v) cfg.fov = v saveCfg() end)
 combat:Slider("smoothness", 1, 10, cfg.smooth * 10, function(v) cfg.smooth = v / 10 saveCfg() end)
 combat:Slider("beam thickness", 1, 20, cfg.beamthick * 100, function(v) cfg.beamthick = v / 100 saveCfg() end)
@@ -428,17 +493,33 @@ movement:Toggle("fly", cfg.flying, function(s)
         if s then bv.Parent = hrp bg.Parent = hrp hum.PlatformStand = true
         else bv.Parent = nil bg.Parent = nil hum.PlatformStand = false end
     end
-    saveCfg() notify("fly " .. (s and "on" or "off"), Color3.fromRGB(160, 32, 240))
+    saveCfg()
 end)
-movement:Toggle("noclip", cfg.noclip, function(s) cfg.noclip = s saveCfg() notify("noclip " .. (s and "on" or "off"), Color3.fromRGB(255, 215, 0)) end)
-movement:Toggle("speed hax", cfg.speedhax, function(s) cfg.speedhax = s if not s and hum then hum.WalkSpeed = 16 end saveCfg() end)
-movement:Toggle("bhop", cfg.bhop, function(s) cfg.bhop = s saveCfg() end)
+movement:Toggle("noclip", cfg.noclip, function(s) cfg.noclip = s saveCfg() end)
+movement:Toggle("speed hax", cfg.speedhax, function(s)
+    cfg.speedhax = s
+    if not s and hum then hum.WalkSpeed = 16 end
+    saveCfg()
+end)
 movement:Slider("fly speed", 20, 300, cfg.flyspd, function(v) cfg.flyspd = v saveCfg() end)
 movement:Slider("walk speed", 16, 100, cfg.walkspd, function(v) cfg.walkspd = v saveCfg() end)
 
-misc:Toggle("coin farm", cfg.farming, function(s) cfg.farming = s saveCfg() notify("coin farm " .. (s and "on" or "off"), Color3.fromRGB(255, 215, 0)) end)
-misc:Toggle("auto pickup gun", cfg.autopickup, function(s) cfg.autopickup = s if not s then gunFolder:ClearAllChildren() end saveCfg() end)
-misc:Slider("farm speed", 1, 20, cfg.farmcool * 10, function(v) cfg.farmcool = v / 10 saveCfg() end)
-misc:Slider("max dist", 50, 500, cfg.maxdist, function(v) cfg.maxdist = v saveCfg() end)
+visuals:Toggle("esp", cfg.esp, function(s)
+    cfg.esp = s
+    if not s then
+        for _, l in espLibraries do setVis(false, l) end
+    end
+    saveCfg()
+end)
+visuals:Toggle("tracers", cfg.tracers, function(s) cfg.tracers = s saveCfg() end)
 
-notify("mm2 loaded", Color3.fromRGB(160, 32, 240))
+fun:Toggle("bhop", cfg.bhop, function(s) cfg.bhop = s bhopVel = 0 saveCfg() end)
+fun:Toggle("auto kill (knife)", cfg.autokill, function(s) cfg.autokill = s saveCfg() end)
+fun:Toggle("coin farm", cfg.farming, function(s) cfg.farming = s saveCfg() end)
+fun:Toggle("auto pickup gun", cfg.autopickup, function(s)
+    cfg.autopickup = s
+    if not s then gunFolder:ClearAllChildren() end
+    saveCfg()
+end)
+fun:Slider("farm speed", 1, 20, cfg.farmcool * 10, function(v) cfg.farmcool = v / 10 saveCfg() end)
+fun:Slider("max dist", 50, 500, cfg.maxdist, function(v) cfg.maxdist = v saveCfg() end)
